@@ -1,1 +1,3 @@
-streamlit
+streamlit>=1.28
+pymupdf>=1.24
+Pillow>=10.0
