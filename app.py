@@ -1,8 +1,4 @@
-# app.py — SafeSeal v5.4 · Streamlit + LibreOffice + Watermark
-# - Title: small heading (####) with extra top padding so it is not clipped
-# - Logo (seal.jpg) shown to the left of the title
-# - Status box placed directly above Start conversion (dark grey, green Courier, tiny font, 4 lines, auto-scroll)
-
+# app.py — SafeSeal 5.5 · Streamlit + LibreOffice + Watermark
 import io, os, shutil, subprocess, tempfile, time, pathlib
 import streamlit as st
 import streamlit.components.v1 as components
@@ -10,25 +6,30 @@ from PIL import Image, ImageDraw, ImageFont
 import fitz  # PyMuPDF
 
 # ---------------------------
-# Page setup (add top padding; small heading)
+# Page setup
 # ---------------------------
-st.set_page_config(page_title="SafeSeal v5.4 · Streamlit + LibreOffice + Watermark",
-                   layout="centered")
-
-# Give enough space for Streamlit's sticky top bar so first heading isn't clipped
+st.set_page_config(page_title="SafeSeal 5.5", layout="centered")
 st.markdown("""
 <style>
 .block-container { padding-top: 3rem; }  /* space under top bar */
+.title-row { display:flex; align-items:center; gap:8px; margin:0 0 0.5rem 0; }
+.title-row img { width:28px; height:28px; border-radius:4px; object-fit:cover; }
+.title-text { font-size:1.05rem; font-weight:600; line-height:1.2; }
 </style>
 """, unsafe_allow_html=True)
 
-# Title row with small logo on the left
 logo_url = "https://raw.githubusercontent.com/FYCodeLab/SafeSeal/main/assets/seal.jpg"
-c1, c2 = st.columns([1, 12], vertical_alignment="center")
-with c1:
-    st.image(logo_url, width=42)  # small logo
-with c2:
-    st.markdown("#### SafeSeal v5.4 · Streamlit + LibreOffice + Watermark")
+st.markdown(f"""
+<div class="title-row">
+  <img src="{logo_url}" alt="SafeSeal logo">
+  <div class="title-text">SafeSeal 5.5</div>
+</div>
+""", unsafe_allow_html=True)
+
+st.write(
+    "Upload a presentation (PPTX) or a document (DOCX), or a PDF (faster). "
+    "The service returns a copy watermarked with the provided name and flattened to make text extraction impractical."
+)
 
 # ---------------------------
 # LibreOffice detection
@@ -53,7 +54,6 @@ def _html_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 def _render_status_box(buf: str, placeholder):
-    # Very small font; fixed 4-line height; green Courier on dark grey; auto-scroll to latest
     html = f"""
 <div id="status-box"
      style="background:#3a3a3a; color:#00ff00;
@@ -68,9 +68,7 @@ def _render_status_box(buf: str, placeholder):
 </div>
 <script>
   const el = document.getElementById('status-box');
-  if (el) {{
-    el.scrollTop = el.scrollHeight;
-  }}
+  if (el) {{ el.scrollTop = el.scrollHeight; }}
 </script>
 """
     with placeholder.container():
@@ -87,9 +85,9 @@ def _load_font(px: int):
 
 def _draw_tiled_watermark(img_rgba, text, dpi=120, angle=45, opacity=60):
     w, h = img_rgba.size
-    font_px = max(6, int(round(8 * dpi / 72.0)))  # ~8pt scaled by DPI
+    font_px = max(6, int(round(8 * dpi / 72.0)))
     font = _load_font(font_px)
-    spacing_px = int(dpi)  # 1-inch spacing
+    spacing_px = int(dpi)
     layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     fill = (180, 180, 180, max(0, min(255, opacity)))
@@ -174,9 +172,9 @@ def convert_office_to_pdf_bytes(file_bytes: bytes, in_name: str, log_cb, pbar) -
 left, right = st.columns([2, 1])
 with left:
     uploaded = st.file_uploader(
-        "Upload Office/PDF document",
-        type=["doc","docx","ppt","pptx","xls","xlsx","odt","odp","ods","pdf"],
-        help="Office or OpenDocument files will be converted to PDF, then watermarked."
+        "PDF, PPTX, DOCX…",
+        type=["pdf","pptx","docx","doc","ppt","xls","xlsx","odt","odp","ods"],
+        help="PDF is fastest. Office files are converted to PDF first, then watermarked and flattened."
     )
 with right:
     profile = st.radio(
@@ -186,14 +184,13 @@ with right:
          "Smallest (100 dpi, q60)"],
         index=1
     )
-    wm_text = st.text_input("Watermark (≤ 15 chars)", value="SLIDESEAL", max_chars=15)
-    st.caption("Watermark is tiled, ~8pt, 1-inch spacing, rotated 45°.")
+    wm_text = st.text_input("Watermark / name (≤ 15 chars)", value="JOHN SMITH", max_chars=15)
 
 dpi, quality = (120, 75)
 if profile.startswith("High"): dpi, quality = (180, 90)
 elif profile.startswith("Smallest"): dpi, quality = (100, 60)
 
-# --- Status block appears just above the Start conversion button
+# Status directly above the button
 st.subheader("Status")
 status_placeholder = st.empty()
 pbar_placeholder = st.empty()
@@ -201,23 +198,21 @@ def log_line(msg):
     nonlocal_buf = st.session_state.get("_logbuf", "") + msg + "\n"
     st.session_state["_logbuf"] = nonlocal_buf
     _render_status_box(nonlocal_buf, status_placeholder)
-
 pbar = pbar_placeholder.progress(0)
 
-# --- Button immediately after status block
 run = st.button("Start conversion")
 
 if run:
     try:
         name = getattr(uploaded, "name", "upload") if uploaded else None
         if not uploaded:
-            st.error("Please upload a document first."); st.stop()
+            st.error("Please upload a file."); st.stop()
         if not wm_text:
-            st.error("Please provide a watermark text."); st.stop()
+            st.error("Please provide a name for the watermark."); st.stop()
 
         ext = pathlib.Path(name).suffix.lower()
         if ext == ".pdf":
-            log_line("Input is already a PDF. Skipping LibreOffice conversion.")
+            log_line("Input is PDF. Skipping LibreOffice conversion.")
             pdf_bytes = uploaded.getbuffer().tobytes()
         else:
             log_line(f"Converting '{name}' to PDF via LibreOffice…")
