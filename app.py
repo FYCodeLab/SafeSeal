@@ -1,4 +1,8 @@
-# app.py — SafeSeal v5.1 · Streamlit + LibreOffice + Watermark · fixed 4-line status with auto-scroll
+# app.py — SafeSeal v5.2 · Streamlit + LibreOffice + Watermark
+# - Status box: dark grey, green Courier, very small font
+# - Status box: hidden until user clicks "Start conversion"
+# - Fixed 4-line height with auto-scroll to newest line
+
 import io, os, shutil, subprocess, tempfile, time, pathlib
 import streamlit as st
 import streamlit.components.v1 as components
@@ -8,31 +12,9 @@ import fitz  # PyMuPDF
 # ---------------------------
 # Page setup
 # ---------------------------
-st.set_page_config(page_title="SafeSeal v5 · Streamlit + LibreOffice + Watermark",
+st.set_page_config(page_title="SafeSeal v5.2 · Streamlit + LibreOffice + Watermark",
                    layout="centered")
-st.subheader("SafeSeal v5.1 · Streamlit + LibreOffice + Watermark")
-
-# ---------------------------
-# CSS — dark, fixed-height (4 lines) status box
-# ---------------------------
-st.markdown("""
-<style>
-.status-box {
-  background: #3a3a3a;              /* dark grey background */
-  color: #00ff00;                   /* bright green text */
-  border: 1px solid #5a5a5a;
-  border-radius: 6px;
-  padding: 8px 10px;
-  font-family: "Courier New", Courier, monospace;
-  font-size: 12px;                  /* small text */
-  line-height: 1.25;
-  white-space: pre-wrap;
-  height: calc(1.25em * 4 + 16px);  /* 4 lines */
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-</style>
-""", unsafe_allow_html=True)
+st.subheader("SafeSeal v5.2 · Streamlit + LibreOffice + Watermark")
 
 # ---------------------------
 # LibreOffice detection
@@ -51,18 +33,37 @@ def _resolve_libreoffice_bin():
 LO_BIN = _resolve_libreoffice_bin()
 
 # ---------------------------
-# Status rendering (fixed position under header + auto-scroll)
+# Status rendering (inline styles so they work inside iframe)
 # ---------------------------
 def _html_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-status_placeholder = None  # will be created directly under the "Status" header (see UI section)
+# Reserve the spot under the header; we will draw here later
+st.subheader("Status")
+_status_placeholder = st.empty()       # status box appears here after click
+_pbar_placeholder   = st.empty()       # progress bar appears here after click
+
+# Session state defaults
+st.session_state.setdefault("_logbuf", "")
+st.session_state.setdefault("_show_status", False)  # hidden by default until user clicks
+st.session_state.setdefault("_pbar", None)
 
 def _render_status_box():
-    """Render current log buffer into the fixed 4-line box and auto-scroll to bottom."""
+    """Render current log buffer into a fixed 4-line box (dark grey, green Courier) with auto-scroll."""
     buf = st.session_state.get("_logbuf", "")
+    # Very small font (11px), line-height 1.2 → ~4 lines tall + padding
     html = f"""
-<div id="status-box" class="status-box">{_html_escape(buf)}</div>
+<div id="status-box"
+     style="background:#3a3a3a; color:#00ff00;
+            border:1px solid #5a5a5a; border-radius:6px;
+            padding:8px 10px;
+            font-family:'Courier New', Courier, monospace;
+            font-size:11px; line-height:1.2;
+            white-space:pre-wrap;
+            height:calc(1.2em * 4 + 16px);
+            overflow-y:auto; overflow-x:hidden;">
+{_html_escape(buf)}
+</div>
 <script>
   const el = document.getElementById('status-box');
   if (el) {{
@@ -70,17 +71,25 @@ def _render_status_box():
   }}
 </script>
 """
-    # Draw inside the reserved placeholder so it stays under the header
-    with status_placeholder.container():
+    # Render in the reserved spot (use iframe so JS runs)
+    with _status_placeholder.container():
         components.html(html, height=110, scrolling=False)
 
-def clear_log():
+def _clear_log():
     st.session_state["_logbuf"] = ""
-    _render_status_box()
+    if st.session_state["_show_status"]:
+        _render_status_box()
 
-def log_line(msg: str):
-    st.session_state["_logbuf"] = st.session_state.get("_logbuf", "") + msg.rstrip() + "\\n"
+def _log_line(msg: str):
+    st.session_state["_logbuf"] = st.session_state.get("_logbuf", "") + msg.rstrip() + "\n"
+    if st.session_state["_show_status"]:
+        _render_status_box()
+
+# If still hidden, show nothing under "Status"; when shown, draw box + progress bar
+if st.session_state["_show_status"]:
     _render_status_box()
+    if st.session_state["_pbar"] is None:
+        st.session_state["_pbar"] = _pbar_placeholder.progress(0)
 
 # ---------------------------
 # Watermark helpers
@@ -95,7 +104,7 @@ def _draw_tiled_watermark(img_rgba, text, dpi=120, angle=45, opacity=60):
     w, h = img_rgba.size
     font_px = max(6, int(round(8 * dpi / 72.0)))   # ~8pt scaled by DPI
     font = _load_font(font_px)
-    spacing_px = int(dpi)  # 1 inch
+    spacing_px = int(dpi)  # 1 inch spacing
     layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     fill = (180, 180, 180, max(0, min(255, opacity)))
@@ -148,34 +157,36 @@ def convert_office_to_pdf_bytes(file_bytes: bytes, in_name: str) -> bytes:
             "--outdir", str(out_dir),
             str(in_path),
         ]
-        log_line("Launching LibreOffice conversion…")
+        _log_line("Launching LibreOffice conversion…")
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         soft = 0
-        pbar = st.session_state["_pbar"]
         while proc.poll() is None:
             if proc.stdout:
                 outl = proc.stdout.readline()
                 if outl:
-                    log_line(outl.strip())
+                    _log_line(outl.strip())
             soft = min(soft + 2, 90)     # soft progress toward 90% while LO runs
-            pbar.progress(soft)
+            if st.session_state["_pbar"]:
+                st.session_state["_pbar"].progress(soft)
             time.sleep(0.05)
         if proc.stdout:
             rest = proc.stdout.read() or ""
             for l in rest.splitlines():
-                log_line(l)
+                _log_line(l)
         if proc.returncode != 0:
-            pbar.progress(0)
+            if st.session_state["_pbar"]:
+                st.session_state["_pbar"].progress(0)
             raise RuntimeError(f"LibreOffice exit code {proc.returncode}. See logs above.")
         out_candidates = list(out_dir.glob("*.pdf"))
         if not out_candidates:
             raise FileNotFoundError("No PDF produced by LibreOffice.")
-        pbar.progress(100)
-        log_line("LibreOffice conversion complete.")
+        if st.session_state["_pbar"]:
+            st.session_state["_pbar"].progress(100)
+        _log_line("LibreOffice conversion complete.")
         return out_candidates[0].read_bytes()
 
 # ---------------------------
-# UI
+# UI (inputs)
 # ---------------------------
 left, right = st.columns([2, 1])
 with left:
@@ -203,13 +214,9 @@ if profile.startswith("High"):
 elif profile.startswith("Smallest"):
     dpi, quality = (100, 60)
 
-# --- Status block lives *here* (directly under the header)
-st.subheader("Status")
-status_placeholder = st.empty()   # reserve the spot NOW, so the box renders here
-pbar = st.progress(0)             # progress bar just under the status box
-st.session_state["_pbar"] = pbar
-clear_log()                       # draw empty box immediately
-
+# ---------------------------
+# Run button (reveals status box on click)
+# ---------------------------
 run = st.button("Start conversion")
 
 if run:
@@ -220,27 +227,35 @@ if run:
         st.error("Please provide a watermark text (1–15 characters).")
         st.stop()
 
+    # Reveal status box + progress bar now
+    st.session_state["_show_status"] = True
+    _render_status_box()
+    if st.session_state["_pbar"] is None:
+        st.session_state["_pbar"] = _pbar_placeholder.progress(0)
+
     try:
         name = getattr(uploaded, "name", "upload")
         ext = pathlib.Path(name).suffix.lower()
         if ext == ".pdf":
-            log_line("Input is already a PDF. Skipping LibreOffice conversion.")
+            _log_line("Input is already a PDF. Skipping LibreOffice conversion.")
             pdf_bytes = uploaded.getbuffer().tobytes()
         else:
-            log_line(f"Converting '{name}' to PDF via LibreOffice…")
+            _log_line(f"Converting '{name}' to PDF via LibreOffice…")
             pdf_bytes = convert_office_to_pdf_bytes(uploaded.getbuffer(), name)
 
-        log_line(f"Applying watermark '{wm_text}' and rebuilding PDF (dpi={dpi}, q={quality})…")
+        _log_line(f"Applying watermark '{wm_text}' and rebuilding PDF (dpi={dpi}, q={quality})…")
         def page_progress(i, total):
             pct = 10 + int(90 * i / max(1, total))   # reserve 0–10% for LO, then pages to 100%
-            st.session_state["_pbar"].progress(min(pct, 100))
+            if st.session_state["_pbar"]:
+                st.session_state["_pbar"].progress(min(pct, 100))
 
         watermarked = pdf_to_imageonly_pdf_with_watermark(
             pdf_bytes, wm_text, dpi, quality,
-            progress_cb=page_progress, log_cb=log_line
+            progress_cb=page_progress, log_cb=_log_line
         )
-        st.session_state["_pbar"].progress(100)
-        log_line("Watermarking complete.")
+        if st.session_state["_pbar"]:
+            st.session_state["_pbar"].progress(100)
+        _log_line("Watermarking complete.")
         out_name = pathlib.Path(name).with_suffix(".pdf").stem + "_sealed.pdf"
         st.success("Done.")
         st.download_button("Download sealed PDF", data=watermarked,
