@@ -1,7 +1,7 @@
-# app.py — SafeSeal v5.3 · Streamlit + LibreOffice + Watermark
-# - Title smaller, less top padding
-# - Status box placed directly above Start conversion button
-# - Status box dark grey + green Courier, very small font, 4-line height, auto-scroll
+# app.py — SafeSeal v5.4 · Streamlit + LibreOffice + Watermark
+# - Title: small heading (####) with extra top padding so it is not clipped
+# - Logo (seal.jpg) shown to the left of the title
+# - Status box placed directly above Start conversion (dark grey, green Courier, tiny font, 4 lines, auto-scroll)
 
 import io, os, shutil, subprocess, tempfile, time, pathlib
 import streamlit as st
@@ -10,16 +10,25 @@ from PIL import Image, ImageDraw, ImageFont
 import fitz  # PyMuPDF
 
 # ---------------------------
-# Page setup (remove big top gap)
+# Page setup (add top padding; small heading)
 # ---------------------------
-st.set_page_config(page_title="SafeSeal v5.3 · Streamlit + LibreOffice + Watermark",
+st.set_page_config(page_title="SafeSeal v5.4 · Streamlit + LibreOffice + Watermark",
                    layout="centered")
+
+# Give enough space for Streamlit's sticky top bar so first heading isn't clipped
 st.markdown("""
 <style>
-.block-container { padding-top: 0.5rem; }   /* shrink top gap */
+.block-container { padding-top: 3rem; }  /* space under top bar */
 </style>
 """, unsafe_allow_html=True)
-st.markdown("### SafeSeal v5.3 · Streamlit + LibreOffice + Watermark")  # smaller title
+
+# Title row with small logo on the left
+logo_url = "https://raw.githubusercontent.com/FYCodeLab/SafeSeal/main/assets/seal.jpg"
+c1, c2 = st.columns([1, 12], vertical_alignment="center")
+with c1:
+    st.image(logo_url, width=42)  # small logo
+with c2:
+    st.markdown("#### SafeSeal v5.4 · Streamlit + LibreOffice + Watermark")
 
 # ---------------------------
 # LibreOffice detection
@@ -44,6 +53,7 @@ def _html_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 def _render_status_box(buf: str, placeholder):
+    # Very small font; fixed 4-line height; green Courier on dark grey; auto-scroll to latest
     html = f"""
 <div id="status-box"
      style="background:#3a3a3a; color:#00ff00;
@@ -77,9 +87,9 @@ def _load_font(px: int):
 
 def _draw_tiled_watermark(img_rgba, text, dpi=120, angle=45, opacity=60):
     w, h = img_rgba.size
-    font_px = max(6, int(round(8 * dpi / 72.0)))
+    font_px = max(6, int(round(8 * dpi / 72.0)))  # ~8pt scaled by DPI
     font = _load_font(font_px)
-    spacing_px = int(dpi)
+    spacing_px = int(dpi)  # 1-inch spacing
     layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     fill = (180, 180, 180, max(0, min(255, opacity)))
@@ -187,15 +197,14 @@ elif profile.startswith("Smallest"): dpi, quality = (100, 60)
 st.subheader("Status")
 status_placeholder = st.empty()
 pbar_placeholder = st.empty()
-buf = ""
-def log_line(msg):  # local logger writing into placeholder
+def log_line(msg):
     nonlocal_buf = st.session_state.get("_logbuf", "") + msg + "\n"
     st.session_state["_logbuf"] = nonlocal_buf
     _render_status_box(nonlocal_buf, status_placeholder)
 
 pbar = pbar_placeholder.progress(0)
 
-# --- Button comes immediately after status block
+# --- Button immediately after status block
 run = st.button("Start conversion")
 
 if run:
