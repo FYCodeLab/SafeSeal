@@ -1,4 +1,4 @@
-# app.py — SafeSeal v5 · Streamlit + LibreOffice + Watermark · fixed 4-line status with auto-scroll
+# app.py — SafeSeal v5.1 · Streamlit + LibreOffice + Watermark · fixed 4-line status with auto-scroll
 import io, os, shutil, subprocess, tempfile, time, pathlib
 import streamlit as st
 import streamlit.components.v1 as components
@@ -10,7 +10,7 @@ import fitz  # PyMuPDF
 # ---------------------------
 st.set_page_config(page_title="SafeSeal v5 · Streamlit + LibreOffice + Watermark",
                    layout="centered")
-st.title("SafeSeal v5 · Streamlit + LibreOffice + Watermark")
+st.subheader("SafeSeal v5.1 · Streamlit + LibreOffice + Watermark")
 
 # ---------------------------
 # CSS — dark, fixed-height (4 lines) status box
@@ -18,14 +18,18 @@ st.title("SafeSeal v5 · Streamlit + LibreOffice + Watermark")
 st.markdown("""
 <style>
 .status-box {
-  background: #2b2b2b; color: #e6e6e6;
-  border: 1px solid #3a3a3a; border-radius: 6px;
+  background: #3a3a3a;              /* dark grey background */
+  color: #00ff00;                   /* bright green text */
+  border: 1px solid #5a5a5a;
+  border-radius: 6px;
   padding: 8px 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 12px; line-height: 1.25;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 12px;                  /* small text */
+  line-height: 1.25;
   white-space: pre-wrap;
-  height: calc(1.25em * 4 + 16px);  /* exactly 4 lines + padding */
-  overflow-y: auto; overflow-x: hidden;
+  height: calc(1.25em * 4 + 16px);  /* 4 lines */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 </style>
 """, unsafe_allow_html=True)
