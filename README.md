@@ -1,6 +1,6 @@
 # <img src="assets/seal.jpg" alt="SafeSeal logo" width="40" align="center"/> SafeSeal
+[![SafeSeal Web App](https://img.shields.io/badge/Launch%20App-SafeSeal-blue?logo=python)](https://safeseal-7lxz.onrender.com)
 
----
 
 ## 🔒 Principle
 
