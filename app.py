@@ -1,18 +1,19 @@
-# app.py — SafeSeal v4 · Streamlit + LibreOffice + Watermark
+# app.py — SafeSeal v5 · Streamlit + LibreOffice + Watermark · fixed 4-line status with auto-scroll
 import io, os, shutil, subprocess, tempfile, time, pathlib
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image, ImageDraw, ImageFont
 import fitz  # PyMuPDF
 
 # ---------------------------
 # Page setup
 # ---------------------------
-st.set_page_config(page_title="SafeSeal v4 · Streamlit + LibreOffice + Watermark",
+st.set_page_config(page_title="SafeSeal v5 · Streamlit + LibreOffice + Watermark",
                    layout="centered")
-st.title("SafeSeal v4 · Streamlit + LibreOffice + Watermark")
+st.title("SafeSeal v5 · Streamlit + LibreOffice + Watermark")
 
 # ---------------------------
-# CSS — dark, fixed-height (4 lines) status box under “Status”
+# CSS — dark, fixed-height (4 lines) status box
 # ---------------------------
 st.markdown("""
 <style>
@@ -46,22 +47,36 @@ def _resolve_libreoffice_bin():
 LO_BIN = _resolve_libreoffice_bin()
 
 # ---------------------------
-# Logging helpers (fixed-height box)
+# Status rendering (fixed position under header + auto-scroll)
 # ---------------------------
-_status_box = st.empty()
+def _html_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-def _render_status():
+status_placeholder = None  # will be created directly under the "Status" header (see UI section)
+
+def _render_status_box():
+    """Render current log buffer into the fixed 4-line box and auto-scroll to bottom."""
     buf = st.session_state.get("_logbuf", "")
-    _status_box.markdown(f"<div class='status-box'>{buf}</div>", unsafe_allow_html=True)
+    html = f"""
+<div id="status-box" class="status-box">{_html_escape(buf)}</div>
+<script>
+  const el = document.getElementById('status-box');
+  if (el) {{
+    el.scrollTop = el.scrollHeight;  // jump to latest line
+  }}
+</script>
+"""
+    # Draw inside the reserved placeholder so it stays under the header
+    with status_placeholder.container():
+        components.html(html, height=110, scrolling=False)
 
 def clear_log():
     st.session_state["_logbuf"] = ""
-    _render_status()
+    _render_status_box()
 
 def log_line(msg: str):
-    buf = st.session_state.get("_logbuf", "")
-    st.session_state["_logbuf"] = buf + msg.rstrip() + "\n"
-    _render_status()
+    st.session_state["_logbuf"] = st.session_state.get("_logbuf", "") + msg.rstrip() + "\\n"
+    _render_status_box()
 
 # ---------------------------
 # Watermark helpers
@@ -97,7 +112,7 @@ def pdf_to_imageonly_pdf_with_watermark(pdf_bytes, wm_text, dpi, quality, progre
         if log_cb: log_cb(f"Watermarking page {idx}/{total}…")
         mat = fitz.Matrix(dpi/72.0, dpi/72.0)
         pix = page.get_pixmap(matrix=mat, alpha=False)
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples).convert("RGBA")
+        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples).convert("RGBA")
         img = _draw_tiled_watermark(img, wm_text, dpi=dpi, opacity=60)
         buf = io.BytesIO()
         img.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True)
@@ -138,7 +153,7 @@ def convert_office_to_pdf_bytes(file_bytes: bytes, in_name: str) -> bytes:
                 outl = proc.stdout.readline()
                 if outl:
                     log_line(outl.strip())
-            soft = min(soft + 2, 90)
+            soft = min(soft + 2, 90)     # soft progress toward 90% while LO runs
             pbar.progress(soft)
             time.sleep(0.05)
         if proc.stdout:
@@ -184,10 +199,12 @@ if profile.startswith("High"):
 elif profile.startswith("Smallest"):
     dpi, quality = (100, 60)
 
+# --- Status block lives *here* (directly under the header)
 st.subheader("Status")
-clear_log()                 # draws fixed-height 4-line box here
-pbar = st.progress(0)       # progress bar directly under status box
+status_placeholder = st.empty()   # reserve the spot NOW, so the box renders here
+pbar = st.progress(0)             # progress bar just under the status box
 st.session_state["_pbar"] = pbar
+clear_log()                       # draw empty box immediately
 
 run = st.button("Start conversion")
 
@@ -198,6 +215,7 @@ if run:
     if len(wm_text) == 0:
         st.error("Please provide a watermark text (1–15 characters).")
         st.stop()
+
     try:
         name = getattr(uploaded, "name", "upload")
         ext = pathlib.Path(name).suffix.lower()
@@ -211,13 +229,13 @@ if run:
         log_line(f"Applying watermark '{wm_text}' and rebuilding PDF (dpi={dpi}, q={quality})…")
         def page_progress(i, total):
             pct = 10 + int(90 * i / max(1, total))   # reserve 0–10% for LO, then pages to 100%
-            pbar.progress(min(pct, 100))
+            st.session_state["_pbar"].progress(min(pct, 100))
 
         watermarked = pdf_to_imageonly_pdf_with_watermark(
             pdf_bytes, wm_text, dpi, quality,
             progress_cb=page_progress, log_cb=log_line
         )
-        pbar.progress(100)
+        st.session_state["_pbar"].progress(100)
         log_line("Watermarking complete.")
         out_name = pathlib.Path(name).with_suffix(".pdf").stem + "_sealed.pdf"
         st.success("Done.")
