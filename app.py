@@ -1,142 +1,267 @@
+import io, os, shutil, subprocess, tempfile, time, pathlib
 import streamlit as st
-import subprocess, tempfile, pathlib, time, os, shutil
+from PIL import Image, ImageDraw, ImageFont
+import fitz  # PyMuPDF
 
-st.set_page_config(page_title="SafeSeal · Streamlit + LibreOffice", layout="centered")
+# ---------------------------
+# Page setup
+# ---------------------------
+st.set_page_config(page_title="SafeSeal v3 · Streamlit + LibreOffice + Watermark",
+                   layout="centered")
 
-# --- Small CSS for compact status window text
+st.title("SafeSeal v3 · Streamlit + LibreOffice + Watermark")
+
+# --- Dark status window + small monospace text
 st.markdown("""
 <style>
-.small-text {font-size: 12px; line-height: 1.2;}
 .status-box {
-  border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; background: #fafafa;
-  max-height: 220px; overflow-y: auto;
+  background: #2b2b2b; color: #e6e6e6;
+  border: 1px solid #3a3a3a; border-radius: 6px;
+  padding: 8px 10px; max-height: 260px; overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px; line-height: 1.25;
+  white-space: pre-wrap;
 }
-code, pre {font-size: 11px;}
+.small-caption { font-size: 12px; color: #aaa; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("SafeSeal · Document → PDF (LibreOffice)")
+# ---------------------------
+# LibreOffice detection
+# ---------------------------
+def _resolve_libreoffice_bin():
+    for cand in ["soffice", "libreoffice", "/usr/bin/soffice", "/usr/bin/libreoffice"]:
+        path = shutil.which(cand) if os.path.basename(cand) == cand else (cand if os.path.exists(cand) else None)
+        if path:
+            try:
+                subprocess.run([path, "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                return path
+            except Exception:
+                continue
+    return None
 
-# Quick environment probe
-colA, colB = st.columns(2)
-with colA:
+LO_BIN = _resolve_libreoffice_bin()
+
+# ---------------------------
+# Logging helpers
+# ---------------------------
+log_holder = st.empty()
+def log_line(msg: str):
+    # Append line into a persistent buffer in session state
+    buf = st.session_state.setdefault("_logbuf", "")
+    buf += (msg.rstrip() + "\n")
+    st.session_state["_logbuf"] = buf
+    log_holder.markdown(f"<div class='status-box'>{st.session_state['_logbuf']}</div>", unsafe_allow_html=True)
+
+def clear_log():
+    st.session_state["_logbuf"] = ""
+    log_holder.markdown("<div class='status-box'></div>", unsafe_allow_html=True)
+
+# ---------------------------
+# Watermark helpers
+# ---------------------------
+def _load_font(px: int):
+    # Prefer DejaVu if available; otherwise default bitmap font
     try:
-        ver = subprocess.check_output(["soffice", "--version"], text=True).strip()
-        st.success(f"LibreOffice: {ver}")
-    except Exception as e:
-        st.error(f"LibreOffice not detected: {e}")
-with colB:
-    py = subprocess.check_output(["python", "--version"], text=True).strip()
-    st.info(py)
+        return ImageFont.truetype("DejaVuSans.ttf", px)
+    except Exception:
+        return ImageFont.load_default()
 
-st.write("Upload a document and I will convert it to PDF using headless LibreOffice.")
+def _draw_tiled_watermark(img_rgba, text, dpi=120, angle=45, opacity=60):
+    """
+    Draw a light grey tiled watermark (≈8pt at given DPI), rotated 'angle' degrees.
+    """
+    w, h = img_rgba.size
+    font_px = max(6, int(round(8 * dpi / 72.0)))   # scale ~8pt to pixel size at given DPI
+    font = _load_font(font_px)
+    spacing_px = int(dpi)  # 1 inch grid
 
-uploaded = st.file_uploader(
-    "Choose a file",
-    type=["doc","docx","ppt","pptx","xls","xlsx","odt","odp","ods"],
-    help="Microsoft Office, OpenDocument formats are supported."
-)
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    # Light grey text; opacity in [0..255]
+    fill = (180, 180, 180, max(0, min(255, opacity)))
 
-def convert_with_libreoffice(input_bytes: bytes, filename: str) -> pathlib.Path:
-    """Run headless LibreOffice conversion. Returns path to produced PDF."""
+    # Tile before rotation for clean text
+    for y in range(-h, h*2, spacing_px):
+        for x in range(-w, w*2, spacing_px):
+            draw.text((x, y), text, font=font, fill=fill)
+
+    # Rotate whole layer and crop back to page size
+    layer = layer.rotate(angle, expand=True, resample=Image.BICUBIC)
+    lw, lh = layer.size
+    left, top = (lw - w) // 2, (lh - h) // 2
+    layer = layer.crop((left, top, left + w, top + h))
+
+    return Image.alpha_composite(img_rgba, layer)
+
+def pdf_to_imageonly_pdf_with_watermark(pdf_bytes, wm_text, dpi, quality, progress_cb=None, log_cb=None):
+    """
+    Rasterize each page to an image at 'dpi', apply tiled watermark, then rebuild a PDF.
+    This flattens content and embeds images at 'quality'.
+    """
+    src = fitz.open(stream=pdf_bytes, filetype="pdf")
+    out = fitz.open()
+    total = len(src)
+    for idx, page in enumerate(src, start=1):
+        if log_cb: log_cb(f"Watermarking page {idx}/{total}…")
+        # Render page
+        mat = fitz.Matrix(dpi/72.0, dpi/72.0)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples).convert("RGBA")
+
+        # Apply watermark
+        img = _draw_tiled_watermark(img, wm_text, dpi=dpi, opacity=60)
+
+        # Encode to JPEG with requested quality
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True)
+
+        # Put back into a blank PDF page
+        rect = fitz.Rect(0, 0, pix.width, pix.height)
+        new_page = out.new_page(width=rect.width, height=rect.height)
+        new_page.insert_image(rect, stream=buf.getvalue())
+
+        if progress_cb:
+            progress_cb(idx, total)
+
+    result = out.tobytes()
+    out.close(); src.close()
+    return result
+
+# ---------------------------
+# Conversion pipeline
+# ---------------------------
+def convert_office_to_pdf_bytes(file_bytes: bytes, in_name: str) -> bytes:
+    if not LO_BIN:
+        raise RuntimeError("LibreOffice is not available on this host.")
     with tempfile.TemporaryDirectory() as td:
-        td_path = pathlib.Path(td)
-        in_path = td_path / filename
-        out_dir = td_path / "out"
+        in_path = pathlib.Path(td) / in_name
+        out_dir = pathlib.Path(td) / "out"
         out_dir.mkdir(parents=True, exist_ok=True)
+        in_path.write_bytes(file_bytes)
 
-        in_path.write_bytes(input_bytes)
-
-        # Build command
         cmd = [
-            "soffice",
+            LO_BIN,
             "--headless", "--nologo", "--nodefault", "--nolockcheck",
             "--norestore", "--nofirststartwizard",
             "--convert-to", "pdf",
             "--outdir", str(out_dir),
             str(in_path),
         ]
-
-        # Launch process without blocking to allow UI updates
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-        )
-
-        # Stream logs and animate progress
-        log_lines = []
-        progress = 0
-        last_bump = time.time()
-
-        status_box = st.empty()      # the log window
-        pbar = st.progress(0)        # the progress bar
-
-        def render_logs():
-            # Render last ~200 lines, compact small font
-            st_html = "<div class='status-box small-text'>" + "<br/>".join(
-                [l.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;") for l in log_lines[-200:]]
-            ) + "</div>"
-            status_box.markdown(st_html, unsafe_allow_html=True)
-
-        # Read output line-by-line while faking smooth progress
+        log_line("Launching LibreOffice conversion…")
+        # We cannot get real progress; run and stream a soft progress instead
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # Soft progress tick while waiting
+        soft = 0
+        pbar = st.session_state["_pbar"]
         while proc.poll() is None:
-            # Non-blocking read of any available output
             if proc.stdout:
-                line = proc.stdout.readline()
-                if line:
-                    log_lines.append(line.rstrip())
-                    render_logs()
-
-            # Bump the progress slowly while the process is alive
-            now = time.time()
-            if now - last_bump > 0.2:
-                # Ease toward 90% while running
-                progress = min(progress + 2, 90)
-                pbar.progress(progress)
-                last_bump = now
-
+                outl = proc.stdout.readline()
+                if outl:
+                    log_line(outl.strip())
+            soft = min(soft + 2, 90)
+            pbar.progress(soft)
             time.sleep(0.05)
 
-        # Drain remaining output
+        # Drain remaining
         if proc.stdout:
             rest = proc.stdout.read() or ""
-            if rest:
-                log_lines.extend([l for l in rest.splitlines()])
-                render_logs()
+            for l in rest.splitlines():
+                log_line(l)
 
-        rc = proc.returncode
-        if rc != 0:
+        if proc.returncode != 0:
             pbar.progress(0)
-            raise RuntimeError(f"LibreOffice exited with code {rc}. See logs above.")
+            raise RuntimeError(f"LibreOffice exit code {proc.returncode}. See logs above.")
 
-        # Complete progress
+        # LibreOffice typically names output with same stem and .pdf
+        out_candidates = list(out_dir.glob("*.pdf"))
+        if not out_candidates:
+            raise FileNotFoundError("No PDF produced by LibreOffice.")
         pbar.progress(100)
+        log_line("LibreOffice conversion complete.")
+        return out_candidates[0].read_bytes()
 
-        # Figure out output name
-        pdf_name = pathlib.Path(filename).with_suffix(".pdf").name
-        pdf_path = out_dir / pdf_name
-        if not pdf_path.exists():
-            # Some formats rename oddly; fallback: find first PDF in out_dir
-            candidates = list(out_dir.glob("*.pdf"))
-            if not candidates:
-                raise FileNotFoundError("Conversion finished but no PDF was produced.")
-            pdf_path = candidates[0]
+# ---------------------------
+# UI
+# ---------------------------
+left, right = st.columns([2, 1])
+with left:
+    uploaded = st.file_uploader(
+        "Upload Office/PDF document",
+        type=["doc","docx","ppt","pptx","xls","xlsx","odt","odp","ods","pdf"],
+        help="Office or OpenDocument files will be converted to PDF, then watermarked."
+    )
 
-        # Move PDF to a persistent temp so it survives context exit
-        final_dir = pathlib.Path(tempfile.mkdtemp())
-        final_pdf = final_dir / pdf_path.name
-        shutil.copy2(pdf_path, final_pdf)
-        return final_pdf
+with right:
+    profile = st.radio(
+        "Compression profile",
+        [
+            "High quality (180 dpi, q90)",
+            "Balanced (120 dpi, q75)",
+            "Smallest (100 dpi, q60)"
+        ],
+        index=1
+    )
+    wm_text = st.text_input("Watermark (≤ 15 chars)", value="SLIDESEAL")
+    if len(wm_text) > 15:
+        st.error("Watermark must be 15 characters or fewer.")
+    angle = 45  # fixed to keep UI simple
+    st.caption("Watermark is tiled, ~8pt, 1-inch spacing, rotated 45°.")
 
-if uploaded:
-    st.subheader("Status")
-    try:
-        pdf_path = convert_with_libreoffice(uploaded.getbuffer(), uploaded.name)
-        st.success("Conversion complete.")
-        with open(pdf_path, "rb") as f:
-            st.download_button("Download PDF", f, file_name=pdf_path.name, mime="application/pdf")
-        st.caption(f"Saved temporary file: {pdf_path}")
-    except Exception as e:
-        st.error(f"Conversion failed: {e}")
+# Parse selected profile
+dpi, quality = (120, 75)
+if profile.startswith("High"):
+    dpi, quality = (180, 90)
+elif profile.startswith("Smallest"):
+    dpi, quality = (100, 60)
+
+st.subheader("Status")
+clear_log()
+pbar = st.progress(0)
+st.session_state["_pbar"] = pbar
+
+run = st.button("Start conversion")
+
+if run:
+    if not uploaded:
+        st.error("Please upload a document first.")
+        st.stop()
+    if len(wm_text) == 0 or len(wm_text) > 15:
+        st.error("Please provide a watermark text of 1–15 characters.")
         st.stop()
 
-st.caption("Tip: first request after an idle period may be slow due to platform cold start.")
+    try:
+        # Step 1: Ensure we have a PDF
+        name = getattr(uploaded, "name", "upload")
+        ext = pathlib.Path(name).suffix.lower()
+        if ext == ".pdf":
+            log_line("Input is already a PDF. Skipping LibreOffice conversion.")
+            pdf_bytes = uploaded.getbuffer().tobytes()
+        else:
+            log_line(f"Converting '{name}' to PDF via LibreOffice…")
+            pdf_bytes = convert_office_to_pdf_bytes(uploaded.getbuffer(), name)
+
+        # Step 2: Watermark + flatten with real per-page progress
+        log_line(f"Applying watermark '{wm_text}' and rebuilding PDF (dpi={dpi}, q={quality})…")
+        total_pages_holder = {"n": 0}
+        def page_progress(i, total):
+            total_pages_holder["n"] = total
+            # map page i/total to 10–100% (reserve first 10% for LO step)
+            pct = 10 + int(90 * i / max(1, total))
+            pbar.progress(min(pct, 100))
+
+        watermarked = pdf_to_imageonly_pdf_with_watermark(
+            pdf_bytes, wm_text, dpi, quality,
+            progress_cb=page_progress, log_cb=log_line
+        )
+        pbar.progress(100)
+        log_line("Watermarking complete.")
+
+        # Step 3: Offer download
+        out_name = pathlib.Path(name).with_suffix(".pdf").stem + "_sealed.pdf"
+        st.success("Done.")
+        st.download_button("Download sealed PDF", data=watermarked,
+                           file_name=out_name, mime="application/pdf")
+        st.caption(f"Pages processed: {total_pages_holder['n']}")
+    except Exception as e:
+        st.error(f"Conversion failed: {e}")
