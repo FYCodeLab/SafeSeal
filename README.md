@@ -21,6 +21,8 @@ The app is hosted on Render:
 
 [![SafeSeal Web App](https://img.shields.io/badge/Launch%20App-SafeSeal-blue?logo=streamlit)](https://safeseal-7lxz.onrender.com)
 [![Launch SafeSeal](https://img.shields.io/badge/%F0%9F%A6%AD%20Launch%20App-blue?logo=streamlit)](https://safeseal-7lxz.onrender.com)
+[![Launch SafeSeal](https://img.shields.io/badge/🔒%20Launch%20App-blue?logo=streamlit)](https://safeseal-7lxz.onrender.com)
+
 ---
 
 ## ⚙️ How it works (for the curious)
