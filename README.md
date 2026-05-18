@@ -1,7 +1,7 @@
 # <img src="assets/seal.jpg" alt="SafeSeal logo" width="40" align="center"/> SafeSeal
-[![SafeSeal Web App](https://img.shields.io/badge/Launch%20App-SafeSeal-blue?logo=python)](https://safeseal-7lxz.onrender.com)
+[![SafeSeal Web App](https://img.shields.io/badge/Launch%20App-SafeSeal-blue?logo=python)](https://safeseal-7lxz.onrender.com) [![SafeSeal Web](https://img.shields.io/badge/Web-SafeSeal-276DC3?logo=homeassistantcommunitystore&logoColor=white)](https://fycodelab.github.io/SafeSeal/) [![SafeSeal Repo](https://img.shields.io/badge/Repo-SafeSeal-276DC3?logo=github&logoColor=white)](https://github.com/FYCodeLab/SafeSeal)
 
-
+---
 ## 🔒 Principle
 
 SafeSeal is a small web service that helps distribute presentations or documents **while discouraging copy/paste or reuse**.  
