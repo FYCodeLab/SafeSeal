@@ -1,6 +1,16 @@
 # <img src="assets/seal.jpg" alt="SafeSeal logo" width="40" align="center"/> SafeSeal
 [![SafeSeal Web App](https://img.shields.io/badge/Launch%20App-SafeSeal-blue?logo=python)](https://safeseal-7lxz.onrender.com) [![SafeSeal Web](https://img.shields.io/badge/Web-SafeSeal-276DC3?logo=homeassistantcommunitystore&logoColor=white)](https://fycodelab.github.io/SafeSeal/) [![SafeSeal Repo](https://img.shields.io/badge/Repo-SafeSeal-276DC3?logo=github&logoColor=white)](https://github.com/FYCodeLab/SafeSeal)
 
+<p align="center">
+  <a href="https://safeseal-7lxz.onrender.com">
+    <img src="https://raw.githubusercontent.com/FYCodeLab/SafeSeal/main/assets/safeseal-screen.png"
+         width="80%"
+         style="border-radius:12px;
+                box-shadow:0 4px 12px rgba(0,0,0,0.25);
+                border:1px solid #d0d7de;">
+  </a>
+</p>
+
 ---
 ## 🔒 Principle
 
